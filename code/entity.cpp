@@ -120,6 +120,22 @@ GetEntityByType(world* World, entity_type Type)
     return Result;
 }
 
+std::vector<v2>
+GetEntityVertices(entity* Entity)
+{
+    v2 EntityP = Entity->Component->P;
+    r32 Width  = Entity->Component->Width;
+    r32 Height = Entity->Component->Height;
+
+    std::vector<v2> VerticesResult;
+    VerticesResult.push_back(EntityP);
+    VerticesResult.push_back(EntityP + V2(Width, 0));
+    VerticesResult.push_back(EntityP + V2(Width, Height));
+    VerticesResult.push_back(EntityP + V2(0, Height));
+
+    return VerticesResult;
+}
+
 struct collision_result
 {
     entity* CollidedEntity;

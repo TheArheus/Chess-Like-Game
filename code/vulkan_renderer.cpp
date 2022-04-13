@@ -211,15 +211,148 @@ InitVulkanRenderer()
     CommandBufferAllocateInfo.commandBufferCount = 1;
 
     vkAllocateCommandBuffers(LogicalDevice, &CommandBufferAllocateInfo, &CommandBuffer);
+
+    MainImageSampler = CreateSampler(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
 }
 
-void
-vulkan_renderer::InitGraphicsPipeline()
+VkWriteDescriptorSet
+vulkan_renderer::WriteBuffer(VkDescriptorBufferInfo* BufferInfo, VkDescriptorSet Set, VkDescriptorType DescriptorType, u32 Binding)
 {
+    VkWriteDescriptorSet WriteDescriptorResult = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    WriteDescriptorResult.descriptorType = DescriptorType;
+    WriteDescriptorResult.dstBinding = Binding;
+    WriteDescriptorResult.dstSet = Set;
+    WriteDescriptorResult.pBufferInfo = BufferInfo;
+    WriteDescriptorResult.descriptorCount = 1;
+
+    return WriteDescriptorResult;
 }
 
-void
-vulkan_renderer::CreateSwapchain(u32 WindowWidth_, u32 WindowHeight_)
+VkWriteDescriptorSet
+vulkan_renderer::WriteImage(VkDescriptorImageInfo* ImageInfo, VkDescriptorSet Set, VkDescriptorType DescriptorType, u32 Binding)
+{
+    VkWriteDescriptorSet WriteDescriptorResult = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    WriteDescriptorResult.descriptorType = DescriptorType;
+    WriteDescriptorResult.dstBinding = Binding;
+    WriteDescriptorResult.dstSet = Set;
+    WriteDescriptorResult.pImageInfo = ImageInfo;
+    WriteDescriptorResult.descriptorCount = 1;
+
+    return WriteDescriptorResult;
+}
+
+void vulkan_renderer::
+UploadShader(const char* Path, VkShaderStageFlagBits Stages)
+{
+    FILE* ShaderFile = fopen(Path, "rb");
+    shader ShaderResult = {};
+
+    if(ShaderFile)
+    {
+        fseek(ShaderFile, 0, SEEK_END);
+        long FileSize = ftell(ShaderFile);
+        fseek(ShaderFile, 0, SEEK_SET);
+
+        char* Buffer = (char*)malloc(FileSize);
+        fread(Buffer, 1, FileSize, ShaderFile);
+        fclose(ShaderFile);
+
+        VkShaderModuleCreateInfo ShaderModuleCreateInfo = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        ShaderModuleCreateInfo.codeSize = FileSize;
+        ShaderModuleCreateInfo.pCode = (u32*)Buffer;
+
+        VK_CHECK(vkCreateShaderModule(LogicalDevice, &ShaderModuleCreateInfo, 0, &ShaderResult.Module));
+        ShaderResult.Stage = Stages;
+
+        free(Buffer);
+
+        ShaderModules.push_back(ShaderResult);
+    }
+}
+
+void vulkan_renderer::
+InitGraphicsPipeline()
+{
+    VkDescriptorSetLayout DescriptorLayout = CreateDescriptorSetLayout();
+
+    VkPipelineLayoutCreateInfo PipelineLayoutCreateInfo = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    PipelineLayoutCreateInfo.pSetLayouts = &DescriptorLayout;
+    PipelineLayoutCreateInfo.setLayoutCount = 1;
+
+    vkCreatePipelineLayout(LogicalDevice, &PipelineLayoutCreateInfo, 0, &MainPipelineLayout);
+
+    VkDescriptorPool DescriptorPool = CreateDescriptorPool();
+
+    VkDescriptorSetAllocateInfo DescriptorAllocateInfo = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    DescriptorAllocateInfo.descriptorPool = DescriptorPool;
+    DescriptorAllocateInfo.pSetLayouts = &DescriptorLayout;
+    DescriptorAllocateInfo.descriptorSetCount = 1;
+
+    VK_CHECK(vkAllocateDescriptorSets(LogicalDevice, &DescriptorAllocateInfo, &MainDescriptor));
+
+    std::vector<VkPipelineShaderStageCreateInfo> Stages;
+    for(shader Shader_ : ShaderModules)
+    {
+        VkPipelineShaderStageCreateInfo ShaderInfo = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+        ShaderInfo.stage = Shader_.Stage;
+        ShaderInfo.module = Shader_.Module;
+        ShaderInfo.pName = "main";
+        Stages.push_back(ShaderInfo);
+    }
+
+    VkPipelineVertexInputStateCreateInfo      VertexInputState = {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+
+    VkPipelineInputAssemblyStateCreateInfo    InputAssemblyState = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    //InputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST_WITH_ADJACENCY;
+    InputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo         ViewportState = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    ViewportState.viewportCount = 1;
+    ViewportState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo    RasterizationState = {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    RasterizationState.cullMode  = VK_CULL_MODE_NONE;
+    RasterizationState.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    RasterizationState.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo      MultisampleState = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    MultisampleState.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo     DepthStencilState = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+
+    VkPipelineColorBlendAttachmentState ColorBlendAttachment = {};
+    ColorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendStateCreateInfo       ColorBlendState = {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    ColorBlendState.pAttachments = &ColorBlendAttachment;
+    ColorBlendState.attachmentCount = 1;
+
+    VkDynamicState DynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo          DynamicState = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    DynamicState.dynamicStateCount = ArraySize(DynamicStates);
+    DynamicState.pDynamicStates = DynamicStates;
+
+
+    VkGraphicsPipelineCreateInfo GPCreateInfo = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    GPCreateInfo.stageCount = (u32)Stages.size();
+    GPCreateInfo.pStages = Stages.data();
+    GPCreateInfo.pVertexInputState = &VertexInputState;
+    GPCreateInfo.pInputAssemblyState = &InputAssemblyState;
+    GPCreateInfo.pViewportState = &ViewportState;
+    GPCreateInfo.pRasterizationState = &RasterizationState;
+    GPCreateInfo.pMultisampleState = &MultisampleState;
+    GPCreateInfo.pDepthStencilState = &DepthStencilState;
+    GPCreateInfo.pColorBlendState = &ColorBlendState;
+    GPCreateInfo.pDynamicState = &DynamicState;
+    GPCreateInfo.layout = MainPipelineLayout;
+    GPCreateInfo.renderPass = RenderPass;
+
+    VkPipelineCache PipelineCache = 0;
+    vkCreateGraphicsPipelines(LogicalDevice, PipelineCache, 1, &GPCreateInfo, 0, &MainPipeline);
+}
+
+void vulkan_renderer::
+CreateSwapchain(u32 WindowWidth_, u32 WindowHeight_)
 {
     if(!WindowWidth_)
     {
@@ -365,16 +498,18 @@ AllocateBuffer(size_t Size, VkBufferUsageFlags BufferUsage, VkMemoryPropertyFlag
 }
 
 void vulkan_renderer::
-UpdateBuffer(buffer& Buffer, buffer& Scratch, void* Data, size_t Size)
+UpdateBuffer(buffer& Buffer, buffer& Scratch, void* Data, size_t Size, size_t Offset)
 {
+    Assert((Size + Offset) <= Buffer.Size);
+
     memcpy(Scratch.Data, Data, Size);
 
-    BeginCommands();
+    VkCommandBuffer UpdateCommandBuffer = BeginCommand();
 
-    VkBufferCopy CopyOffset = {0, 0, (VkDeviceSize)Size};
-    vkCmdCopyBuffer(CommandBuffer, Scratch.Buffer, Buffer.Buffer, 1, &CopyOffset);
+    VkBufferCopy CopyOffset = {Offset, 0, (VkDeviceSize)Size};
+    vkCmdCopyBuffer(UpdateCommandBuffer, Scratch.Buffer, Buffer.Buffer, 1, &CopyOffset);
 
-#if 1
+#if 0
     VkBufferMemoryBarrier MemoryBarrier = CreateMemoryBarrier(Buffer, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
     vkCmdPipelineBarrier(CommandBuffer, 
                          VK_PIPELINE_STAGE_TRANSFER_BIT, 
@@ -383,7 +518,29 @@ UpdateBuffer(buffer& Buffer, buffer& Scratch, void* Data, size_t Size)
                          0, 0, 1, &MemoryBarrier, 0, 0);
 #endif
 
-    EndCommands();
+    EndCommand(UpdateCommandBuffer);
+}
+
+void vulkan_renderer::
+UpdateBuffer(buffer& Buffer, buffer& Scratch, size_t Size, size_t Offset)
+{
+    Assert((Size + Offset) <= Buffer.Size);
+
+    VkCommandBuffer UpdateCommandBuffer = BeginCommand();
+
+    VkBufferCopy CopyOffset = {Offset, 0, Size};
+    vkCmdCopyBuffer(UpdateCommandBuffer, Scratch.Buffer, Buffer.Buffer, 1, &CopyOffset);
+
+#if 0
+    VkBufferMemoryBarrier MemoryBarrier = CreateMemoryBarrier(Buffer, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+    vkCmdPipelineBarrier(CommandBuffer, 
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 
+                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 
+                         VK_DEPENDENCY_BY_REGION_BIT, 
+                         0, 0, 1, &MemoryBarrier, 0, 0);
+#endif
+
+    EndCommand(UpdateCommandBuffer);
 }
 
 VkBufferMemoryBarrier vulkan_renderer::
@@ -415,8 +572,8 @@ CreateImageBarrier(image& Image, VkAccessFlags OldAccess, VkAccessFlags NewAcces
     ImageBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     ImageBarrier.image = Image.Image;
     ImageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    ImageBarrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
-    ImageBarrier.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
+    ImageBarrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS; // NOTE: 1
+    ImageBarrier.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS; // NOTE: 1
 
     return ImageBarrier;
 }
@@ -436,7 +593,7 @@ CreateImage(u32 ImageWidth, u32 ImageHeight, VkImageUsageFlags Usage, VkMemoryPr
     ImageCreateInfo.extent.height = ImageHeight;
     ImageCreateInfo.extent.depth = 1;
     ImageCreateInfo.mipLevels = 1;
-    ImageCreateInfo.arrayLayers = ShouldBeCubemap ? 6 * LayersCount : LayersCount;
+    ImageCreateInfo.arrayLayers = ShouldBeCubemap ? 6 * LayersCount : LayersCount; // 1 by default
     ImageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     ImageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     ImageCreateInfo.usage = Usage;
@@ -472,10 +629,12 @@ CreateImage(u32 ImageWidth, u32 ImageHeight, VkImageUsageFlags Usage, VkMemoryPr
     return Result;
 }
 
-void
-vulkan_renderer::UpdateTexture(image& Image, buffer& Scratch)
+void vulkan_renderer::
+UpdateTexture(image& Image, buffer& Scratch, size_t Offset)
 {
-    //BeginCommands();
+    VkCommandBuffer UpdateCommandBuffer = BeginCommand();
+    UpdateImageLayout(Image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
     VkBufferImageCopy BufferImageCopy = {};
     BufferImageCopy.bufferOffset = 0;
     BufferImageCopy.bufferRowLength = Image.Width;
@@ -484,12 +643,34 @@ vulkan_renderer::UpdateTexture(image& Image, buffer& Scratch)
     BufferImageCopy.imageOffset = {0, 0, 0};
     BufferImageCopy.imageExtent = {Image.Width, Image.Height, 1};
 
-    vkCmdCopyBufferToImage(CommandBuffer, Scratch.Buffer, Image.Image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 1, &BufferImageCopy);
-    //EndCommands();
+    vkCmdCopyBufferToImage(UpdateCommandBuffer, Scratch.Buffer, Image.Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &BufferImageCopy);
+
+    EndCommand(UpdateCommandBuffer);
 }
 
-VkImageView
-vulkan_renderer::CreateImageView(VkImage Image)
+void vulkan_renderer::
+UpdateImageLayout(image& Image, VkImageLayout OldLayout, VkImageLayout NewLayout)
+{
+    VkCommandBuffer UpdateCommandBuffer = BeginCommand();
+    VkImageMemoryBarrier ImageBarrier;
+    if(OldLayout == VK_IMAGE_LAYOUT_UNDEFINED && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+    {
+        ImageBarrier = CreateImageBarrier(Image, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, OldLayout, NewLayout);
+    }
+    else if(OldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+    {
+        ImageBarrier = CreateImageBarrier(Image, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, OldLayout, NewLayout);
+    }
+    vkCmdPipelineBarrier(UpdateCommandBuffer, 
+                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 
+                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 
+                         VK_DEPENDENCY_BY_REGION_BIT, 
+                         0, 0, 0, 0, 1, &ImageBarrier);
+    EndCommand(UpdateCommandBuffer);
+}
+
+VkImageView vulkan_renderer::
+CreateImageView(VkImage Image)
 {
     VkImageSubresourceRange Range = {};
     Range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -508,8 +689,8 @@ vulkan_renderer::CreateImageView(VkImage Image)
     return ImageViewResult;
 }
 
-VkFramebuffer
-vulkan_renderer::CreateFramebuffer(VkImageView ImageView_)
+VkFramebuffer vulkan_renderer::
+CreateFramebuffer(VkImageView ImageView_)
 {
     VkFramebufferCreateInfo FbCreateInfo = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
     FbCreateInfo.renderPass = RenderPass;
@@ -524,38 +705,43 @@ vulkan_renderer::CreateFramebuffer(VkImageView ImageView_)
     return FramebufferResult;
 }
 
-VkSampler
-vulkan_renderer::CreateSampler(VkFilter Filter, VkSamplerAddressMode AddressMode)
+VkSampler vulkan_renderer::
+CreateSampler(VkFilter Filter, VkSamplerAddressMode AddressMode)
 {
     VkSamplerCreateInfo SamplerCreateInfo = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     SamplerCreateInfo.magFilter = Filter;
     SamplerCreateInfo.minFilter = Filter;
-    SamplerCreateInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    SamplerCreateInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     SamplerCreateInfo.addressModeU = AddressMode;
     SamplerCreateInfo.addressModeV = AddressMode;
     SamplerCreateInfo.addressModeW = AddressMode;
-    SamplerCreateInfo.unnormalizedCoordinates = false;
+    SamplerCreateInfo.unnormalizedCoordinates = VK_FALSE;
+    //SamplerCreateInfo.anisotropyEnable = VK_TRUE;
+    //SamplerCreateInfo.maxAnisotropy = 4;
+    SamplerCreateInfo.compareEnable = VK_FALSE;
+    SamplerCreateInfo.compareOp = VK_COMPARE_OP_ALWAYS;
 
     VkSampler SamplerResult;
     VK_CHECK(vkCreateSampler(LogicalDevice, &SamplerCreateInfo, 0, &SamplerResult));
     return SamplerResult;
 }
 
-VkDescriptorSetLayout
-vulkan_renderer::CreateDescriptorSetLayout()
+VkDescriptorSetLayout vulkan_renderer::
+CreateDescriptorSetLayout()
 {
     std::vector<VkDescriptorSetLayoutBinding> Bindings(2);
     Bindings[0].binding = 0;
-    Bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    Bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     Bindings[0].descriptorCount = 1;
-    Bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    Bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
     Bindings[1].binding = 1;
-    Bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    Bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     Bindings[1].descriptorCount = 1;
-    Bindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    Bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo DescriptorSetLayoutCreateInfo = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    //DescriptorSetLayoutCreateInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
     DescriptorSetLayoutCreateInfo.pBindings = Bindings.data();
     DescriptorSetLayoutCreateInfo.bindingCount = (u32)Bindings.size();
 
@@ -565,8 +751,28 @@ vulkan_renderer::CreateDescriptorSetLayout()
     return DescriptorSetLayoutResult;
 }
 
-void
-vulkan_renderer::CreateRenderPass()
+VkDescriptorPool vulkan_renderer::
+CreateDescriptorPool()
+{
+    std::vector<VkDescriptorPoolSize> Sizes = 
+    {
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10}
+    };
+
+    VkDescriptorPoolCreateInfo DescriptorPoolCreateInfo = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    DescriptorPoolCreateInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    DescriptorPoolCreateInfo.maxSets = 10;
+    DescriptorPoolCreateInfo.poolSizeCount = (u32)Sizes.size();
+    DescriptorPoolCreateInfo.pPoolSizes = Sizes.data();
+
+    VkDescriptorPool DescriptorPoolResult;
+    vkCreateDescriptorPool(LogicalDevice, &DescriptorPoolCreateInfo, 0, &DescriptorPoolResult);
+    return DescriptorPoolResult;
+}
+
+void vulkan_renderer::
+CreateRenderPass()
 {
     VkAttachmentDescription Attachment = {};
     Attachment.format = SwapchainSurfaceFormat.format;
@@ -587,11 +793,22 @@ vulkan_renderer::CreateRenderPass()
     Subpass.colorAttachmentCount = 1;
     Subpass.pColorAttachments = &AttachmentReference;
 
+    VkSubpassDependency Dependency = {};
+    Dependency.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+    Dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    Dependency.dstSubpass = 0;
+    Dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    Dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    Dependency.srcAccessMask = 0;
+    Dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
     VkRenderPassCreateInfo RenderPassCreateInfo = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
     RenderPassCreateInfo.attachmentCount = 1;
     RenderPassCreateInfo.pAttachments = &Attachment;
     RenderPassCreateInfo.subpassCount = 1;
     RenderPassCreateInfo.pSubpasses = &Subpass;
+    RenderPassCreateInfo.pDependencies = &Dependency;
+    RenderPassCreateInfo.dependencyCount = 0;
 
     VK_CHECK(vkCreateRenderPass(LogicalDevice, &RenderPassCreateInfo, 0, &RenderPass));
 }
@@ -599,12 +816,49 @@ vulkan_renderer::CreateRenderPass()
 void vulkan_renderer::
 BeginCommands()
 {
+    //vkResetCommandBuffer(CommandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
     // NOTE: I could create command buffer and command pool here if I want to.
     // Any advantages, if so?
     VkCommandBufferBeginInfo CommandBufferBeginInfo = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     CommandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
     vkBeginCommandBuffer(CommandBuffer, &CommandBufferBeginInfo);
+}
+
+VkCommandBuffer vulkan_renderer::
+BeginCommand()
+{
+    VkCommandBuffer CommandBufferResult;
+
+    VkCommandBufferAllocateInfo CommandBufferAllocateInfo = {};
+    CommandBufferAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    CommandBufferAllocateInfo.commandPool = CommandPool;
+    CommandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    CommandBufferAllocateInfo.commandBufferCount = 1;
+
+    vkAllocateCommandBuffers(LogicalDevice, &CommandBufferAllocateInfo, &CommandBufferResult);
+
+    VkCommandBufferBeginInfo CommandBufferBeginInfo = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    CommandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+    vkBeginCommandBuffer(CommandBufferResult, &CommandBufferBeginInfo);
+
+    return CommandBufferResult;
+}
+
+void vulkan_renderer::
+EndCommand(VkCommandBuffer CommandBufferResult)
+{
+    vkEndCommandBuffer(CommandBufferResult);
+
+    VkSubmitInfo SubmitInfo = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    SubmitInfo.commandBufferCount = 1;
+    SubmitInfo.pCommandBuffers = &CommandBufferResult;
+
+    vkQueueSubmit(Queue, 1, &SubmitInfo, VK_NULL_HANDLE);
+    VK_CHECK(vkDeviceWaitIdle(LogicalDevice));
+
+    vkFreeCommandBuffers(LogicalDevice, CommandPool, 1, &CommandBufferResult);
 }
 
 void vulkan_renderer::
@@ -624,7 +878,7 @@ EndCommands(VkSemaphore* AcquireSemaphore_, VkSemaphore* ReleaseSemaphore_)
     SubmitInfo.signalSemaphoreCount = (ReleaseSemaphore_) ? 1 : 0;
     SubmitInfo.pSignalSemaphores = ReleaseSemaphore_;
 
-    vkQueueSubmit(Queue, 1, &SubmitInfo, Fence);
+    vkQueueSubmit(Queue, 1, &SubmitInfo, VK_NULL_HANDLE);
     VK_CHECK(vkDeviceWaitIdle(LogicalDevice));
 }
 
@@ -668,8 +922,78 @@ DrawImage(image Image, v3 StartPointSrc, v3 StartPointDst)
 
     vkCmdCopyImage(CommandBuffer, 
                    Image.Image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 
-                   SwapchainImages[ImageIndex], VK_IMAGE_LAYOUT_GENERAL,
+                   SwapchainImages[ImageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                    1, &ImageCopy);
+}
+
+void vulkan_renderer::
+BindBuffer(buffer& VertexBuffer, u32 Binding)
+{
+    PFN_vkCmdPushDescriptorSetKHR vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)vkGetInstanceProcAddr(Instance, "vkCmdPushDescriptorSetKHR");
+
+    vkCmdBindPipeline(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, MainPipeline);
+
+    VkDescriptorBufferInfo BufferInfo = {};
+    BufferInfo.buffer = VertexBuffer.Buffer;
+    BufferInfo.offset = 0;
+    BufferInfo.range  = VertexBuffer.Size;
+
+    VkWriteDescriptorSet WriteDescriptor = WriteBuffer(&BufferInfo, MainDescriptor, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, Binding);
+
+    //vkCmdPushDescriptorSetKHR(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, MainPipelineLayout, 0, 1, &WriteDescriptor);
+    vkUpdateDescriptorSets(LogicalDevice, 1, &WriteDescriptor, 0, nullptr);
+}
+
+void vulkan_renderer::
+BindImage(image& Image, u32 Binding)
+{
+    PFN_vkCmdPushDescriptorSetKHR vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)vkGetInstanceProcAddr(Instance, "vkCmdPushDescriptorSetKHR");
+
+    VkDescriptorImageInfo ImageInfo = {};
+    ImageInfo.sampler = MainImageSampler;
+    ImageInfo.imageView = Image.View;
+    ImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkWriteDescriptorSet WriteDescriptor;// = WriteImage(&ImageInfo, MainDescriptor, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, Binding);
+
+    vkUpdateDescriptorSets(LogicalDevice, 1, &WriteDescriptor, 0, 0);
+
+    //vkCmdPushDescriptorSetKHR(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, MainPipelineLayout, 0, 1, &WriteDescriptor);
+    //vkCmdBindDescriptorSets(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, MainPipelineLayout, 0, 1, &MainDescriptor, 0, nullptr);
+}
+
+void vulkan_renderer::
+DrawMeshes(buffer& VertexBuffer, buffer& IndexBuffer, image& Image)
+{
+    BeginRendering();
+
+    PFN_vkCmdPushDescriptorSetKHR vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)vkGetInstanceProcAddr(Instance, "vkCmdPushDescriptorSetKHR");
+
+    UpdateImageLayout(Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    vkCmdBindPipeline(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, MainPipeline);
+    VkWriteDescriptorSet WriteDescriptor[2];
+
+    VkDescriptorBufferInfo BufferInfo = {};
+    BufferInfo.buffer = VertexBuffer.Buffer;
+    BufferInfo.offset = 0;
+    BufferInfo.range  = VertexBuffer.Size;
+
+    VkDescriptorImageInfo ImageInfo = {};
+    ImageInfo.sampler = MainImageSampler;
+    ImageInfo.imageView = Image.View;
+    ImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    WriteDescriptor[0] = WriteBuffer(&BufferInfo, MainDescriptor, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 0);
+    WriteDescriptor[1] = WriteImage(&ImageInfo, MainDescriptor, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1);
+
+    vkUpdateDescriptorSets(LogicalDevice, ArraySize(WriteDescriptor), WriteDescriptor, 0, 0);
+    vkCmdBindDescriptorSets(CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, MainPipelineLayout, 0, 1, &MainDescriptor, 0, nullptr);
+
+    vkCmdBindIndexBuffer(CommandBuffer, IndexBuffer.Buffer, 0, VK_INDEX_TYPE_UINT32);
+    vkCmdDrawIndexed(CommandBuffer, 6, 1, 0, 0, 0); 
+
+    EndRendering();
 }
 
 void vulkan_renderer::
@@ -712,29 +1036,3 @@ vulkan_renderer::~vulkan_renderer()
     vkDestroyDebugReportCallbackEXT(Instance, DebugCallback, 0);
     vkDestroyInstance(Instance, nullptr);
 }
-
-#if 0
-int main(int argc, char** argv)
-{
-    u32 WindowWidth  = 600;
-    u32 WindowHeight = 600;
-
-    SDL_Init(SDL_INIT_EVERYTHING);
-
-    SDL_Window* Window = SDL_CreateWindow("Vulkan Renderer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WindowWidth, WindowHeight, SDL_WINDOW_VULKAN|SDL_WINDOW_SHOWN);
-
-    vulkan_renderer* VulkanRenderer = new vulkan_renderer(Window, WindowWidth, WindowHeight);
-    VulkanRenderer->InitVulkanRenderer();
-
-    buffer VertexBuffer = VulkanRenderer->AllocateBuffer(1024, BUFFER_TRANSFER_SRC, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-    image TestImage = VulkanRenderer->CreateImage(32, 32, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    while(1)
-    {
-        VulkanRenderer->BeginRendering();
-        VulkanRenderer->EndRendering();
-    }
-
-    return 0;
-}
-#endif

@@ -1,4 +1,5 @@
 
+#include <initializer_list>
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <SDL2/SDL_config.h>
 #include <SDL2/SDL_syswm.h>
@@ -53,6 +54,20 @@ struct image
     u32 Height;
 };
 
+struct shader
+{
+    VkShaderModule Module;
+    VkShaderStageFlagBits Stage;
+};
+
+struct material
+{
+    VkPipeline Pipeline;
+    VkPipelineLayout PipelineLayout;
+};
+
+using shaders = std::initializer_list<const shader*>;
+
 class vulkan_renderer 
 {
 private:
@@ -85,24 +100,35 @@ private:
 
     VkDebugReportCallbackEXT DebugCallback;
 
+    std::vector<shader> ShaderModules;
     std::vector<VkImage> SwapchainImages;
     std::vector<VkImageView> SwapchainImageViews;
     std::vector<VkFramebuffer> SwapchainFramebuffers;
 
+    std::unordered_map<std::string, material> Materials;
+
     VkRenderPass RenderPass;
+    VkSampler MainImageSampler;
+
+    VkPipeline MainPipeline;
+    VkPipelineLayout MainPipelineLayout;
+    VkDescriptorSet MainDescriptor;
 
     VkBufferMemoryBarrier CreateMemoryBarrier(buffer& Buffer, VkAccessFlags CurrentAccess, VkAccessFlags NewAccess);
     VkImageMemoryBarrier CreateImageBarrier(image& Image, VkAccessFlags OldAccess, VkAccessFlags NewAccess, VkImageLayout OldLayout, VkImageLayout NewLayout);
     VkSampler CreateSampler(VkFilter Filter = VK_FILTER_LINEAR, VkSamplerAddressMode AddressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT);
     VkDescriptorSetLayout CreateDescriptorSetLayout();
+    VkDescriptorPool CreateDescriptorPool();
 
     VkImageView CreateImageView(VkImage Image);
     VkFramebuffer CreateFramebuffer(VkImageView ImageView_);
+    void UpdateImageLayout(image& Image, VkImageLayout OldLayout, VkImageLayout NewLayout);
 
     void CreateRenderPass();
 
     VkSemaphore CreateSemaphore();
     VkFence CreateFence();
+
 public:
     vulkan_renderer(SDL_Window* Window_, u32 Width_, u32 Height_);
     ~vulkan_renderer();
@@ -117,13 +143,26 @@ public:
     void BeginCommands();
     void EndCommands(VkSemaphore* AcquireSemaphore_ = nullptr, VkSemaphore* ReleaseSemaphore_ = nullptr);
 
+    VkCommandBuffer BeginCommand();
+    void EndCommand(VkCommandBuffer CommandBufferResult);
+
     void BeginRendering();
     void EndRendering();
 
-    void UpdateBuffer(buffer& Buffer, buffer& Scratch, void* Data, size_t Size);
-    void UpdateTexture(image& Image, buffer& Scratch);
+    void BindBuffer(buffer& VertexBuffer, u32 Binding);
+    void BindImage(image& Image, u32 Binding);
+
+    void UpdateBuffer(buffer& Buffer, buffer& Scratch, void* Data, size_t Size, size_t Offset = 0);
+    void UpdateBuffer(buffer& Buffer, buffer& Scratch, size_t Size, size_t Offset = 0);
+    void UpdateTexture(image& Image, buffer& Scratch, size_t Offset = 0);
 
     void DrawImage(image Image, v3 StartPointSrc = V3(0, 0, 0), v3 StartPointDst = V3(0, 0, 0));
+    void DrawMeshes(buffer& VertexBuffer, buffer& IndexBuffer, image& Image);
+
+    VkWriteDescriptorSet WriteBuffer(VkDescriptorBufferInfo* BufferInfo, VkDescriptorSet Set, VkDescriptorType DescriptorType, u32 Binding);
+    VkWriteDescriptorSet WriteImage(VkDescriptorImageInfo* ImageInfo, VkDescriptorSet Set, VkDescriptorType DescriptorType, u32 Binding);
+
+    void UploadShader(const char* Path, VkShaderStageFlagBits Stages);
 
     image CreateImage(u32 ImageWidth, u32 ImageHeight, VkImageUsageFlags Usage, VkMemoryPropertyFlags MemoryFlags, u32 LayersCount = 1, VkBool32 ShouldBeCubemap = 0);
 };

@@ -20,6 +20,20 @@ r32 DeltaTime = 0;
 r32 TimeForFrame = 0;
 r32 dtForFrame = 0;
 
+struct vertex_data
+{
+    v2 Vertex;
+    v3 Color;
+};
+
+vertex_data CreateVertex(v2 Vert, v3 Col)
+{
+    vertex_data Result = {};
+    Result.Vertex = Vert;
+    Result.Color = Col;
+    return Result;
+}
+
 class game
 {
 private:
@@ -38,6 +52,11 @@ private:
     
     buffer TransientBuffer;
     buffer VertexBuffer;
+    buffer IndexBuffer;
+
+    memory_block MainBlock;
+    memory_block VertexBlock;
+    memory_block IndexBlock;
 
 public:
     game();
@@ -54,6 +73,10 @@ game()
 
     Renderer = new vulkan_renderer(window, ColorBuffer->Width, ColorBuffer->Height);
     Renderer->InitVulkanRenderer();
+    
+    Renderer->UploadShader("../shaders/mesh.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+    Renderer->UploadShader("../shaders/mesh.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+
     Renderer->InitGraphicsPipeline();
 
     World = (world*)malloc(sizeof(world));
@@ -106,7 +129,8 @@ CreateLevel(u32 NumOfCols, u32 NumOfRows)
                     Color = V4(255, 255, 255, 255);
                 }
             }
-            CreateEntity(World, Position, V2(0, 0), EntityWidth, EntityHeight, EntityType_Structure, PackBGRA(Color));
+            //CreateEntity(World, Position, V2(0, 0), EntityWidth, EntityHeight, EntityType_Structure, PackBGRA(Color));
+            DrawRect(ColorBuffer, Position, Position + V2(EntityWidth, EntityHeight), PackRGBA(Color));
 
             if((X < 3) && (Y < 3))
             {
@@ -123,21 +147,16 @@ CreateLevel(u32 NumOfCols, u32 NumOfRows)
 void game::
 Setup()
 {
-    RenderEntry  = Renderer->CreateImage(ColorBuffer->Width, ColorBuffer->Height, VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    RenderEntry  = Renderer->CreateImage(ColorBuffer->Width, ColorBuffer->Height, 
+                                         VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT, 
+                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     RenderBuffer = Renderer->AllocateBuffer(ColorBuffer->Width*ColorBuffer->Height*sizeof(u32), 
                                             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
                                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     TransientBuffer = Renderer->AllocateBuffer(1024, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     VertexBuffer = Renderer->AllocateBuffer(1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    std::vector<v2> MainWindow;
-    MainWindow.push_back(V2(0, 0));
-    MainWindow.push_back(V2(ColorBuffer->Width, 0));
-    MainWindow.push_back(V2(ColorBuffer->Width, ColorBuffer->Height));
-    MainWindow.push_back(V2(0, ColorBuffer->Height));
-
-    Renderer->UpdateBuffer(VertexBuffer, TransientBuffer, &MainWindow[0], MainWindow.size()*sizeof(v2));
+    IndexBuffer = Renderer->AllocateBuffer(1024, VK_BUFFER_USAGE_INDEX_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     ColorBuffer->Memory = (u32*)RenderBuffer.Data;
     //ColorBuffer->Memory = (u32*)malloc(sizeof(u32)*ColorBuffer->Width*ColorBuffer->Height);
@@ -191,8 +210,9 @@ Update()
 void game::
 Render()
 {
-    Renderer->BeginRendering();
+    Renderer->UpdateTexture(RenderEntry, RenderBuffer);
 
+#if 0
     entity_storage* StorageToUpdate = World->EntityStorage;
     for(u32 EntityIndex = 0;
         EntityIndex < StorageToUpdate->EntityCount;
@@ -225,10 +245,11 @@ Render()
             } break;
         }
     }
-    Renderer->UpdateTexture(RenderEntry, RenderBuffer);
-    Renderer->DrawImage(RenderEntry);
-
-    Renderer->EndRendering();
+#endif
+    //Renderer->DrawImage(RenderEntry);
+    //Renderer->BindBuffer(VertexBuffer, 0);
+    //Renderer->BindImage(RenderEntry, 1);
+    Renderer->DrawMeshes(VertexBuffer, IndexBuffer, RenderEntry);
 }
 
 void game::
@@ -236,6 +257,38 @@ Run()
 {
     while(IsRunning)
     {
+        AllocateMemoryBlock(&MainBlock, (u8*)TransientBuffer.Data, (memory_index)TransientBuffer.Size);
+
+#if 1
+        std::vector<v2> MainWindow;
+        MainWindow.push_back(V2(-1, -1));
+        MainWindow.push_back(V2( 1, -1));
+        MainWindow.push_back(V2( 1,  1));
+        MainWindow.push_back(V2(-1,  1));
+#else
+        std::vector<vertex_data> Vertices;
+        Vertices.push_back(CreateVertex(V2( 0.0, -0.5), V3(1, 0, 0)));
+        Vertices.push_back(CreateVertex(V2( 0.5,  0.5), V3(0, 1, 0)));
+        Vertices.push_back(CreateVertex(V2(-0.5,  0.5), V3(0, 0, 1)));
+#endif
+
+        std::vector<u32> MainWindowIndices = {0, 1, 2, 2, 3, 0};
+        //std::vector<u32> MainWindowIndices = {0, 1, 2};
+
+#if 0
+        SubMemoryBlock(&MainBlock, &VertexBlock, Vertices.size()*sizeof(vertex_data));
+        SubMemoryBlock(&MainBlock, &IndexBlock, MainWindowIndices.size()*sizeof(u32));
+
+        PushData(&VertexBlock, Vertices.data(), VertexBlock.Size);
+        PushData(&IndexBlock, MainWindowIndices.data(), IndexBlock.Size);
+
+        Renderer->UpdateBuffer(VertexBuffer, TransientBuffer, VertexBlock.Size, GetOffsetFromMainBase(&MainBlock, &VertexBlock));
+        Renderer->UpdateBuffer(IndexBuffer, TransientBuffer, IndexBlock.Size, GetOffsetFromMainBase(&MainBlock, &IndexBlock));
+#else
+        Renderer->UpdateBuffer(VertexBuffer, TransientBuffer, MainWindow.data(), MainWindow.size()*sizeof(v2));
+        Renderer->UpdateBuffer(IndexBuffer, TransientBuffer, MainWindowIndices.data(), MainWindowIndices.size()*sizeof(u32));
+#endif
+
         ProcessInput();
         Update();
         Render();

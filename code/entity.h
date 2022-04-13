@@ -64,6 +64,7 @@ struct world
 void CreateEntity(world* World, v2 Position, v2 Velocity, u32 Width, u32 Height, entity_type Type, u32 Color = 0xFFFFFFFF);
 void RemoveEntityByID(world* World, u32 EntityID);
 entity* GetEntityByType(world* World, entity_type Type);
+std::vector<v2> GetEntityVertices(entity* Entity);
 void UpdateEntities(world* World, r32 DeltaTime, bool* GameOver = nullptr, i32* BallCount = 0);
 
 #endif

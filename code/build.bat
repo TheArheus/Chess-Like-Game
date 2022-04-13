@@ -13,6 +13,9 @@ set LIB_VULKAN="C:\VulkanSDK\1.2.189.2\Lib"
 set CommonCompileFlags=-MT -nologo -fp:fast -EHa -Od -WX- -W4 -Oi -GR- -Gm- -GS -DCHESS_DEBUG=1 -wd4100 -wd4201 -wd4505 -FC -Z7 /I%INC_VCPKG%
 set CommonLinkFlags=-opt:ref -incremental:no /NODEFAULTLIB:msvcrt /SUBSYSTEM:CONSOLE /LIBPATH:%LIB_VCPKG%  
 
+call glslangValidator --target-env vulkan1.2 ..\shaders\mesh.vert.glsl -V -o ..\shaders\mesh.vert.spv
+call glslangValidator --target-env vulkan1.2 ..\shaders\mesh.frag.glsl -V -o ..\shaders\mesh.frag.spv
+
 if not exist ..\build mkdir ..\build
 pushd ..\build
 
